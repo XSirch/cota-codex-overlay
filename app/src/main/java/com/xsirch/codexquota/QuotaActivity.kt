@@ -10,12 +10,10 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,12 +23,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Login
@@ -38,34 +35,34 @@ import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.TouchApp
-import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.isSystemInDarkTheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -80,17 +77,20 @@ import java.util.concurrent.Executors
 class QuotaActivity : ComponentActivity() {
     private val executor = Executors.newSingleThreadExecutor()
     private val state = mutableStateOf<ScreenState>(ScreenState.Loading)
+    private val overlayRunning = mutableStateOf(false)
     private var pendingOverlayPermission = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent { QuotaTheme { App() } }
+        refreshOverlayState()
         refreshInitial()
     }
 
     override fun onResume() {
         super.onResume()
+        refreshOverlayState()
         if (pendingOverlayPermission && Settings.canDrawOverlays(this)) {
             pendingOverlayPermission = false
             startOverlay()
@@ -100,6 +100,11 @@ class QuotaActivity : ComponentActivity() {
     override fun onDestroy() {
         executor.shutdownNow()
         super.onDestroy()
+    }
+
+    private fun refreshOverlayState() {
+        overlayRunning.value = getSharedPreferences("overlay_state", MODE_PRIVATE)
+            .getBoolean("running", false)
     }
 
     private fun refreshInitial() {
@@ -123,10 +128,12 @@ class QuotaActivity : ComponentActivity() {
                 val usage = AppCore.fetchUsage(this)
                 runOnUiThread {
                     state.value = ScreenState.Ready(usage)
-                    maybeOfferOverlay()
+                    if (Settings.canDrawOverlays(this)) startOverlay(showToast = false)
                 }
             } catch (e: Exception) {
-                runOnUiThread { state.value = ScreenState.Error(e.message ?: "Falha ao entrar no ChatGPT.") }
+                runOnUiThread {
+                    state.value = ScreenState.Error(e.message ?: "Falha ao entrar no ChatGPT.")
+                }
             }
         }
     }
@@ -138,46 +145,53 @@ class QuotaActivity : ComponentActivity() {
                 val usage = AppCore.fetchUsage(this)
                 runOnUiThread { state.value = ScreenState.Ready(usage) }
             } catch (e: Exception) {
-                runOnUiThread { state.value = ScreenState.Error(e.message ?: "Não foi possível atualizar a cota.") }
+                runOnUiThread {
+                    state.value = ScreenState.Error(e.message ?: "Não foi possível atualizar a cota.")
+                }
             }
         }
     }
 
-    private fun maybeOfferOverlay() {
-        if (Settings.canDrawOverlays(this)) startOverlay()
-    }
-
     private fun requestOverlay() {
         if (Settings.canDrawOverlays(this)) {
-            startOverlay(); return
+            startOverlay()
+            return
         }
         pendingOverlayPermission = true
-        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
-        startActivity(intent)
+        startActivity(
+            Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+        )
     }
 
-    private fun startOverlay() {
+    private fun startOverlay(showToast: Boolean = true) {
         if (!Settings.canDrawOverlays(this)) return
         if (Build.VERSION.SDK_INT >= 33) {
-            runCatching { requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 830) }
+            runCatching {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 830)
+            }
         }
         val intent = Intent(this, OverlayService::class.java)
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
-        Toast.makeText(this, "Overlay ativado", Toast.LENGTH_SHORT).show()
+        overlayRunning.value = true
+        if (showToast) Toast.makeText(this, "Bolha ativada", Toast.LENGTH_SHORT).show()
     }
 
-    private fun stopOverlay() {
+    private fun stopOverlay(showToast: Boolean = true) {
         stopService(Intent(this, OverlayService::class.java))
-        Toast.makeText(this, "Overlay desativado", Toast.LENGTH_SHORT).show()
+        overlayRunning.value = false
+        if (showToast) Toast.makeText(this, "Bolha desativada", Toast.LENGTH_SHORT).show()
     }
 
     private fun logout() {
-        stopOverlay()
+        stopOverlay(showToast = false)
         AppCore.SecureStore(this).clear()
         state.value = ScreenState.SignedOut
     }
 
-    @androidx.compose.material3.ExperimentalMaterial3Api
+    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun App() {
         val s = state.value
@@ -185,18 +199,20 @@ class QuotaActivity : ComponentActivity() {
             containerColor = MaterialTheme.colorScheme.background,
             topBar = {
                 TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background
+                    ),
                     title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(
-                                    Brush.linearGradient(listOf(Color(0xFF57E7BE), Color(0xFF1680FF)))
-                                ), contentAlignment = Alignment.Center
-                            ) { Text("C", color = Color(0xFF08110E), fontWeight = FontWeight.Black, fontSize = 19.sp, fontFamily = FontFamily.Monospace) }
-                            Spacer(Modifier.width(10.dp))
-                            Column {
-                                Text("Cota Codex", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                                Text("overlay de uso", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                        Text(
+                            "Cota Codex",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 18.sp
+                        )
+                    },
+                    actions = {
+                        if (s is ScreenState.Ready) {
+                            IconButton(onClick = { loadUsage() }) {
+                                Icon(Icons.Rounded.Refresh, contentDescription = "Atualizar cota")
                             }
                         }
                     }
@@ -205,9 +221,17 @@ class QuotaActivity : ComponentActivity() {
         ) { padding ->
             when (s) {
                 ScreenState.SignedOut -> LoginScreen(padding)
-                ScreenState.LoggingIn -> LoadingScreen(padding, "Abrindo o ChatGPT…", "Preparando login seguro com PKCE.")
+                ScreenState.LoggingIn -> LoadingScreen(
+                    padding,
+                    "Preparando login",
+                    "Abrindo a autenticação segura do ChatGPT."
+                )
                 ScreenState.WaitingBrowser -> WaitingBrowserScreen(padding)
-                ScreenState.Loading -> LoadingScreen(padding, "Atualizando sua cota…", "Consultando os limites atuais do Codex.")
+                ScreenState.Loading -> LoadingScreen(
+                    padding,
+                    "Atualizando cota",
+                    "Consultando os limites atuais do Codex."
+                )
                 is ScreenState.Ready -> Dashboard(padding, s.usage)
                 is ScreenState.Error -> ErrorScreen(padding, s.message)
             }
@@ -218,189 +242,462 @@ class QuotaActivity : ComponentActivity() {
     private fun LoginScreen(padding: PaddingValues) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(20.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp)
         ) {
             item {
-                Text("Sua cota sempre\nno canto da tela.", fontWeight = FontWeight.Bold, fontSize = 36.sp, lineHeight = 41.sp)
+                Text(
+                    "Consulte sua cota sem interromper o que estiver fazendo.",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 28.sp,
+                    lineHeight = 34.sp
+                )
                 Spacer(Modifier.height(12.dp))
-                Text("Uma bolha flutuante que expande ao toque, atualiza sua cota e mostra exatamente quando cada janela reseta.", color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 23.sp)
-            }
-            item {
-                PremiumCard {
-                    Feature(Icons.Rounded.TouchApp, "Overlay retrátil", "Arraste para qualquer canto. Toque para expandir ou recolher.")
-                    HorizontalDivider(Modifier.padding(vertical = 15.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                    Feature(Icons.Rounded.Login, "Login direto", "Abre o ChatGPT no navegador e retorna automaticamente ao app. Sem código de dispositivo.")
-                    HorizontalDivider(Modifier.padding(vertical = 15.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                    Feature(Icons.Rounded.Security, "Sem senha no app", "A autenticação acontece no domínio da OpenAI usando OAuth + PKCE.")
-                }
-            }
-            item {
+                Text(
+                    "A bolha fica disponível sobre outros apps e mostra quanto resta e quando cada janela renova.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 15.sp,
+                    lineHeight = 22.sp
+                )
+                Spacer(Modifier.height(32.dp))
+                CapabilityRow(
+                    Icons.Rounded.TouchApp,
+                    "Bolha flutuante",
+                    "Toque para abrir, arraste para mover e solte na lixeira para encerrar."
+                )
+                HorizontalDivider(Modifier.padding(start = 44.dp, top = 16.dp, bottom = 16.dp))
+                CapabilityRow(
+                    Icons.Rounded.Login,
+                    "Login direto",
+                    "A autenticação acontece no navegador e retorna automaticamente ao app."
+                )
+                HorizontalDivider(Modifier.padding(start = 44.dp, top = 16.dp, bottom = 16.dp))
+                CapabilityRow(
+                    Icons.Rounded.Security,
+                    "Credenciais protegidas",
+                    "Sua senha não passa pelo aplicativo; os tokens ficam no Android Keystore."
+                )
+                Spacer(Modifier.height(32.dp))
                 Button(
                     onClick = { directLogin() },
-                    modifier = Modifier.fillMaxWidth().height(58.dp),
-                    shape = RoundedCornerShape(17.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF57E7BE), contentColor = Color(0xFF062E24))
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 ) {
-                    Icon(Icons.Rounded.Login, null); Spacer(Modifier.width(10.dp)); Text("Entrar com ChatGPT", fontWeight = FontWeight.Bold)
+                    Icon(Icons.Rounded.Login, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Entrar com ChatGPT", fontWeight = FontWeight.SemiBold)
                 }
+            }
+        }
+    }
+
+    @Composable
+    private fun CapabilityRow(icon: ImageVector, title: String, body: String) {
+        Row(verticalAlignment = Alignment.Top) {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(20.dp))
+            Column {
+                Text(title, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    body,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp
+                )
             }
         }
     }
 
     @Composable
     private fun WaitingBrowserScreen(padding: PaddingValues) {
-        Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.fillMaxSize().padding(padding).padding(horizontal = 28.dp),
+            contentAlignment = Alignment.Center
+        ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Surface(shape = RoundedCornerShape(22.dp), color = Color(0xFF14352D), modifier = Modifier.size(72.dp)) {
-                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.OpenInNew, null, tint = Color(0xFF57E7BE), modifier = Modifier.size(34.dp)) }
-                }
-                Spacer(Modifier.height(22.dp))
-                Text("Conclua o login no navegador", fontWeight = FontWeight.Bold, fontSize = 22.sp, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(9.dp))
-                Text("Não há código para copiar. Assim que o ChatGPT autorizar, o app recebe o retorno automaticamente.", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, lineHeight = 21.sp)
+                Icon(
+                    Icons.Rounded.OpenInNew,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(30.dp)
+                )
                 Spacer(Modifier.height(20.dp))
-                CircularProgressIndicator(color = Color(0xFF57E7BE), strokeWidth = 3.dp)
+                Text(
+                    "Conclua o login no navegador",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 20.sp,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Quando a autorização terminar, esta tela continua automaticamente.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    fontSize = 14.sp,
+                    lineHeight = 21.sp
+                )
+                Spacer(Modifier.height(24.dp))
+                CircularProgressIndicator(
+                    modifier = Modifier.size(28.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 2.5.dp
+                )
             }
         }
     }
 
     @Composable
     private fun Dashboard(padding: PaddingValues, usage: AppCore.UsageData) {
-        val overlayOn = Settings.canDrawOverlays(this)
         val primary = usage.windows.firstOrNull { it.group == "Codex" }
+        val otherWindows = usage.windows.drop(if (primary != null) 1 else 0)
+        val permissionGranted = Settings.canDrawOverlays(this)
+        val running = overlayRunning.value
+
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp)
         ) {
             item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column {
-                        Text("${usage.plan.ifBlank { "Codex" }} · atualizado agora", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                        Text("Visão geral", fontWeight = FontWeight.Bold, fontSize = 27.sp)
-                    }
-                    TextButton(onClick = { loadUsage() }) { Icon(Icons.Rounded.Refresh, null); Spacer(Modifier.width(5.dp)); Text("Atualizar") }
-                }
+                Text(
+                    usage.plan.ifBlank { "Codex" },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Uso",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 26.sp
+                )
+                Spacer(Modifier.height(16.dp))
             }
+
             if (primary != null) {
                 item {
-                    PremiumCard {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Column {
-                                Text("COTA PRINCIPAL", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-                                Spacer(Modifier.height(8.dp))
-                                Text("${primary.remainingPercent.toInt()}%", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 42.sp, color = quotaColor(primary.remainingPercent))
-                                Text("restante · ${AppCore.windowLabel(primary.windowSeconds)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                            }
-                            Surface(shape = CircleShape, color = quotaColor(primary.remainingPercent).copy(alpha = .12f), modifier = Modifier.size(68.dp)) {
-                                Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Bolt, null, tint = quotaColor(primary.remainingPercent), modifier = Modifier.size(30.dp)) }
-                            }
-                        }
-                        Spacer(Modifier.height(16.dp))
-                        LinearProgressIndicator(progress = (primary.remainingPercent / 100).toFloat(), modifier = Modifier.fillMaxWidth().height(8.dp).clip(CircleShape), color = quotaColor(primary.remainingPercent), trackColor = Color.White.copy(alpha = .08f))
-                        Spacer(Modifier.height(12.dp))
-                        Text(resetText(primary.resetAt), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                    }
+                    PrimaryQuota(primary)
+                    Spacer(Modifier.height(28.dp))
                 }
             }
-            item {
-                PremiumCard {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(shape = RoundedCornerShape(14.dp), color = if (overlayOn) Color(0xFF14352D) else Color(0xFF20262B), modifier = Modifier.size(48.dp)) {
-                            Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Visibility, null, tint = if (overlayOn) Color(0xFF57E7BE) else MaterialTheme.colorScheme.onSurfaceVariant) }
-                        }
-                        Spacer(Modifier.width(14.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(if (overlayOn) "Overlay autorizado" else "Ativar overlay", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            Text(if (overlayOn) "A bolha pode aparecer sobre outros apps." else "Permita exibir a bolha sobre outros aplicativos.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                        }
-                    }
-                    Spacer(Modifier.height(15.dp))
-                    if (overlayOn) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(onClick = { startOverlay() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) { Text("Mostrar bolha") }
-                            OutlinedButton(onClick = { stopOverlay() }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp)) { Text("Ocultar") }
-                        }
-                    } else {
-                        Button(onClick = { requestOverlay() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("Conceder permissão") }
+
+            if (otherWindows.isNotEmpty()) {
+                item {
+                    SectionLabel("OUTRAS JANELAS")
+                    Spacer(Modifier.height(6.dp))
+                }
+                itemsIndexed(otherWindows) { index, window ->
+                    WindowRow(window)
+                    if (index != otherWindows.lastIndex) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     }
                 }
+                item { Spacer(Modifier.height(28.dp)) }
             }
-            if (usage.windows.size > 1) {
-                item { Text("Outras janelas", fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.padding(top = 5.dp)) }
-                items(usage.windows.drop(1)) { window -> WindowCard(window) }
-            }
+
             item {
-                TextButton(onClick = { logout() }, modifier = Modifier.fillMaxWidth()) { Text("Sair da conta", color = Color(0xFFFF8A92)) }
+                SectionLabel("OVERLAY")
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Bolha flutuante", fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            when {
+                                running -> "Ativa sobre outros aplicativos"
+                                permissionGranted -> "Permissão concedida · bolha desativada"
+                                else -> "Requer permissão para aparecer sobre outros apps"
+                            },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp
+                        )
+                    }
+                    Switch(
+                        checked = running,
+                        onCheckedChange = { checked ->
+                            if (checked) {
+                                if (permissionGranted) startOverlay() else requestOverlay()
+                            } else {
+                                stopOverlay()
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                            checkedTrackColor = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Mover ou fechar", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "Arraste a bolha pela tela. Durante o arrasto, solte-a na lixeira para encerrar.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+                Spacer(Modifier.height(28.dp))
+            }
+
+            item {
+                SectionLabel("CONTA")
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Plano", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            usage.plan.ifBlank { "ChatGPT" },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp
+                        )
+                    }
+                    if (usage.secureDnsUsed) {
+                        Text(
+                            "DNS seguro",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                TextButton(
+                    onClick = { logout() },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                        Text("Sair da conta", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
             }
         }
     }
 
     @Composable
-    private fun WindowCard(w: AppCore.QuotaWindow) {
-        PremiumCard {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Column { Text(w.group, fontWeight = FontWeight.SemiBold); Text(AppCore.windowLabel(w.windowSeconds), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) }
-                Text("${w.remainingPercent.toInt()}%", color = quotaColor(w.remainingPercent), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+    private fun PrimaryQuota(w: AppCore.QuotaWindow) {
+        val color = quotaColor(w.remainingPercent)
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .64f)
+        ) {
+            Column(Modifier.padding(horizontal = 18.dp, vertical = 18.dp)) {
+                SectionLabel("COTA PRINCIPAL")
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        "${w.remainingPercent.toInt()}",
+                        color = color,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 46.sp,
+                        lineHeight = 48.sp
+                    )
+                    Text(
+                        "%",
+                        color = color,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 22.sp,
+                        modifier = Modifier.padding(bottom = 5.dp)
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        AppCore.windowLabel(w.windowSeconds),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(bottom = 5.dp)
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                LinearProgressIndicator(
+                    progress = (w.remainingPercent / 100).toFloat(),
+                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                    color = color,
+                    trackColor = MaterialTheme.colorScheme.outlineVariant
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    resetRelative(w.resetAt),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 18.sp
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    resetAbsolute(w.resetAt),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp
+                )
             }
-            Spacer(Modifier.height(11.dp))
-            LinearProgressIndicator(progress = (w.remainingPercent / 100).toFloat(), modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape), color = quotaColor(w.remainingPercent), trackColor = Color.White.copy(alpha = .08f))
-            Spacer(Modifier.height(9.dp)); Text(resetText(w.resetAt), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
         }
     }
 
     @Composable
-    private fun Feature(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, body: String) {
-        Row(verticalAlignment = Alignment.Top) {
-            Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.size(42.dp)) {
-                Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = Color(0xFF57E7BE)) }
+    private fun WindowRow(w: AppCore.QuotaWindow) {
+        val color = quotaColor(w.remainingPercent)
+        Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(w.group, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        AppCore.windowLabel(w.windowSeconds),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
+                }
+                Text(
+                    "${w.remainingPercent.toInt()}%",
+                    color = color,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
             }
-            Spacer(Modifier.width(13.dp)); Column { Text(title, fontWeight = FontWeight.SemiBold); Spacer(Modifier.height(3.dp)); Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, lineHeight = 18.sp) }
+            Spacer(Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = (w.remainingPercent / 100).toFloat(),
+                modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                color = color,
+                trackColor = MaterialTheme.colorScheme.outlineVariant
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "${resetRelative(w.resetAt)} · ${resetAbsolute(w.resetAt)}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp
+            )
         }
+    }
+
+    @Composable
+    private fun SectionLabel(text: String) {
+        Text(
+            text,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.1.sp
+        )
     }
 
     @Composable
     private fun LoadingScreen(padding: PaddingValues, title: String, body: String) {
-        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.fillMaxSize().padding(padding).padding(horizontal = 28.dp),
+            contentAlignment = Alignment.Center
+        ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = Color(0xFF57E7BE), strokeWidth = 3.dp)
-                Spacer(Modifier.height(18.dp)); Text(title, fontWeight = FontWeight.Bold, fontSize = 18.sp); Spacer(Modifier.height(6.dp)); Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                CircularProgressIndicator(
+                    modifier = Modifier.size(28.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 2.5.dp
+                )
+                Spacer(Modifier.height(20.dp))
+                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    body,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    fontSize = 13.sp
+                )
             }
         }
     }
 
     @Composable
     private fun ErrorScreen(padding: PaddingValues, message: String) {
-        Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.fillMaxSize().padding(padding).padding(horizontal = 28.dp),
+            contentAlignment = Alignment.Center
+        ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Rounded.ErrorOutline, null, tint = Color(0xFFFF727C), modifier = Modifier.size(48.dp)); Spacer(Modifier.height(16.dp))
-                Text("Não foi possível continuar", fontWeight = FontWeight.Bold, fontSize = 21.sp); Spacer(Modifier.height(8.dp))
-                Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, lineHeight = 20.sp); Spacer(Modifier.height(18.dp))
-                Button(onClick = { refreshInitial() }, shape = RoundedCornerShape(14.dp)) { Text("Tentar novamente") }
-                TextButton(onClick = { AppCore.SecureStore(this@QuotaActivity).clear(); state.value = ScreenState.SignedOut }) { Text("Voltar ao login") }
+                Icon(
+                    Icons.Rounded.ErrorOutline,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(34.dp)
+                )
+                Spacer(Modifier.height(18.dp))
+                Text("Não foi possível continuar", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    message,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 20.sp,
+                    fontSize = 13.sp
+                )
+                Spacer(Modifier.height(20.dp))
+                Button(
+                    onClick = { refreshInitial() },
+                    shape = RoundedCornerShape(10.dp)
+                ) { Text("Tentar novamente") }
+                TextButton(
+                    onClick = {
+                        AppCore.SecureStore(this@QuotaActivity).clear()
+                        state.value = ScreenState.SignedOut
+                    }
+                ) { Text("Voltar ao login") }
             }
         }
     }
 
-    @Composable
-    private fun PremiumCard(content: @Composable ColumnScope.() -> Unit) {
-        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-            Column(Modifier.padding(18.dp), content = content)
+    private fun resetRelative(unixSeconds: Long): String {
+        if (unixSeconds <= 0) return "Reset indisponível"
+        val diff = unixSeconds * 1000L - System.currentTimeMillis()
+        val mins = diff.coerceAtLeast(0L) / 60_000L
+        val days = mins / 1440
+        val hours = (mins % 1440) / 60
+        val min = mins % 60
+        return when {
+            days > 0 -> "Renova em ${days}d ${hours}h"
+            hours > 0 -> "Renova em ${hours}h ${min}min"
+            else -> "Renova em ${min.coerceAtLeast(1)}min"
         }
     }
 
-    private fun resetText(unixSeconds: Long): String {
-        if (unixSeconds <= 0) return "Reset indisponível"
-        val diff = unixSeconds * 1000L - System.currentTimeMillis()
-        val mins = diff.coerceAtLeast(0L) / 60_000L; val days = mins / 1440; val hours = (mins % 1440) / 60; val min = mins % 60
-        val relative = when { days > 0 -> "${days}d ${hours}h"; hours > 0 -> "${hours}h ${min}min"; else -> "${min.coerceAtLeast(1)}min" }
-        val absolute = DateTimeFormatter.ofPattern("dd/MM · HH:mm", Locale("pt", "BR")).withZone(ZoneId.systemDefault()).format(Instant.ofEpochSecond(unixSeconds))
-        return "Renova em $relative · $absolute"
+    private fun resetAbsolute(unixSeconds: Long): String {
+        if (unixSeconds <= 0) return ""
+        return DateTimeFormatter
+            .ofPattern("dd/MM/yyyy · HH:mm", Locale("pt", "BR"))
+            .withZone(ZoneId.systemDefault())
+            .format(Instant.ofEpochSecond(unixSeconds))
     }
 
     @Composable
-    private fun quotaColor(v: Double): Color = when { v >= 50 -> Color(0xFF57E7BE); v >= 20 -> Color(0xFFFFC857); else -> Color(0xFFFF727C) }
+    private fun quotaColor(v: Double): Color = when {
+        v >= 50 -> MaterialTheme.colorScheme.primary
+        v >= 20 -> Color(0xFFB77700)
+        else -> MaterialTheme.colorScheme.error
+    }
 
     private sealed interface ScreenState {
         data object SignedOut : ScreenState
@@ -412,15 +709,39 @@ class QuotaActivity : ComponentActivity() {
     }
 }
 
-private val QuotaColors = darkColorScheme(
-    primary = Color(0xFF57E7BE), onPrimary = Color(0xFF062E24),
-    background = Color(0xFF090B0D), onBackground = Color(0xFFF2F5F4),
-    surface = Color(0xFF111519), onSurface = Color(0xFFF2F5F4),
-    surfaceVariant = Color(0xFF1A2025), onSurfaceVariant = Color(0xFFA7B0B7),
-    outline = Color(0xFF3A434A), outlineVariant = Color(0xFF252C32), error = Color(0xFFFF727C)
+private val QuotaDarkColors = darkColorScheme(
+    primary = Color(0xFF5CC8A8),
+    onPrimary = Color(0xFF062E24),
+    background = Color(0xFF0E1012),
+    onBackground = Color(0xFFE9ECEA),
+    surface = Color(0xFF14171A),
+    onSurface = Color(0xFFE9ECEA),
+    surfaceVariant = Color(0xFF1A1E21),
+    onSurfaceVariant = Color(0xFF9EA7A3),
+    outline = Color(0xFF444B48),
+    outlineVariant = Color(0xFF292E2C),
+    error = Color(0xFFE16D73)
+)
+
+private val QuotaLightColors = lightColorScheme(
+    primary = Color(0xFF166A55),
+    onPrimary = Color.White,
+    background = Color(0xFFF7F8F6),
+    onBackground = Color(0xFF181B1A),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF181B1A),
+    surfaceVariant = Color(0xFFF0F2EF),
+    onSurfaceVariant = Color(0xFF626A66),
+    outline = Color(0xFF777E7A),
+    outlineVariant = Color(0xFFDDE1DE),
+    error = Color(0xFFB3261E)
 )
 
 @Composable
 private fun QuotaTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = QuotaColors, typography = Typography(), content = content)
+    MaterialTheme(
+        colorScheme = if (isSystemInDarkTheme()) QuotaDarkColors else QuotaLightColors,
+        typography = Typography(),
+        content = content
+    )
 }
