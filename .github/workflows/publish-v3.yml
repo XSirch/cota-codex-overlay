@@ -1,0 +1,71 @@
+name: Publish v3.0.0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-v3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build installable APK
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Prepare release asset
+        run: cp app/build/outputs/apk/debug/app-debug.apk Cota-Codex-Overlay-v3.apk
+
+      - name: Write release notes
+        run: |
+          cat > RELEASE_NOTES.md <<'EOF'
+          ## Cota Codex Overlay v3.0.0
+
+          Aplicativo Android não oficial para consultar rapidamente a cota de uso do Codex e os horários de reset.
+
+          ### Destaques
+          - Overlay flutuante retrátil com percentual da cota principal.
+          - Toque para expandir e visualizar todas as janelas de uso e resets.
+          - Bolha arrastável com encaixe automático nas bordas.
+          - Arraste a bolha até a lixeira para encerrar o overlay.
+          - Login direto com ChatGPT via OAuth + PKCE, sem código de dispositivo.
+          - Fallback DNS-over-HTTPS quando a resolução DNS do Android falhar.
+          - Visual v3 refatorado como utilitário Android, com menos cards e hierarquia focada em dados.
+          - Suporte à aparência clara/escura do sistema e controles com touch targets adequados.
+          - Tokens de autenticação armazenados localmente com Android Keystore.
+
+          ### Instalação
+          Baixe `Cota-Codex-Overlay-v3.apk` nos assets desta release e permita a instalação de apps desta fonte no Android.
+
+          > Este projeto não é um aplicativo oficial da OpenAI. A consulta de cota usa endpoints internos do Codex que podem mudar futuramente.
+          EOF
+
+      - name: Publish GitHub release
+        run: |
+          if gh release view v3.0.0 >/dev/null 2>&1; then
+            gh release upload v3.0.0 Cota-Codex-Overlay-v3.apk --clobber
+          else
+            gh release create v3.0.0 Cota-Codex-Overlay-v3.apk \
+              --target "$GITHUB_SHA" \
+              --title "Cota Codex Overlay v3.0.0" \
+              --notes-file RELEASE_NOTES.md
+          fi
