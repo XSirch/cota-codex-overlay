@@ -73,19 +73,22 @@ object AppCore {
             context.getSharedPreferences(prefsName, Context.MODE_PRIVATE).edit().putString(key, packed).apply()
         }
 
-        fun get(key: String): String? = try {
-            val packed = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE).getString(key, null) ?: return null
-            val parts = packed.split(":", limit = 2)
-            if (parts.size != 2) return null
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                getOrCreateKey(),
-                GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP))
-            )
-            String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), StandardCharsets.UTF_8)
-        } catch (_: Exception) {
-            null
+        fun get(key: String): String? {
+            return try {
+                val packed = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE).getString(key, null)
+                    ?: return null
+                val parts = packed.split(":", limit = 2)
+                if (parts.size != 2) return null
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(
+                    Cipher.DECRYPT_MODE,
+                    getOrCreateKey(),
+                    GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP))
+                )
+                String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), StandardCharsets.UTF_8)
+            } catch (_: Exception) {
+                null
+            }
         }
 
         fun clear() {
